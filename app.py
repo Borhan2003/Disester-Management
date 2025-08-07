@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, session, g
+from flask import Flask, render_template, request, redirect, session, g ,url_for
 from datetime import datetime
 import sqlite3
 import os
@@ -81,20 +81,29 @@ def register():
     return render_template('register.html')
 
 # dashboard route
+#C233082
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' not in session:
         return redirect('/login')
 
     role = session.get('role')
+    user_id = session['user_id']
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT name FROM users WHERE user_id = ?", (user_id,))
+    user = cur.fetchone()
+    citizen_name = user['name'] if user else "Citizen"
+
     if role == 'admin':
         return render_template('admin_dashboard.html')
     elif role == 'volunteer':
         return redirect('/volunteer_home')
     elif role == 'citizen':
-        return render_template('citizen_dashboard.html')
+        return render_template('citizen_dashboard.html', citizen_name=citizen_name)
     else:
         return "Unknown role"
+
 
 
 #voluteer_home
@@ -172,6 +181,7 @@ def delete_volunteer(user_id):
 
 
 #citizen_report_disaster
+#  C233082 s
 @app.route('/report_disaster', methods=['GET', 'POST'])
 def report_disaster():
     if 'user_id' not in session:
@@ -199,6 +209,111 @@ def report_disaster():
 
     return render_template('report_disaster.html')
 
+@app.route('/request_help', methods=['GET', 'POST'])
+def request_help():
+    if 'user_id' not in session:
+        return redirect('/login')
+
+    if session.get('role') != 'citizen':
+        return "Only citizens can request help."
+
+    db = get_db()
+    cur = db.cursor()
+
+    if request.method == 'POST':
+        user_id = session['user_id']
+        disaster_id = request.form.get('disaster_id')
+        help_type = request.form.get('help_type')
+        location = request.form.get('location')
+        contact_info = request.form.get('contact_info')
+
+        if not (disaster_id and help_type and location and contact_info):
+            return "All fields are required.", 400
+
+        try:
+            cur.execute("""
+                INSERT INTO help_requests (user_id, disaster_id, help_type, location, contact_info)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, disaster_id, help_type, location, contact_info))
+            db.commit()
+            return redirect('/dashboard')
+        except Exception as e:
+            return f"Database error: {e}", 500
+
+    cur.execute("SELECT disaster_id, type, location, date_time FROM disasters ORDER BY date_time DESC")
+    disasters = cur.fetchall()
+    return render_template('request_help.html', disasters=disasters)
+@app.route('/my_requests')
+def my_requests():
+    if 'user_id' not in session:
+        return redirect('/login')
+    if session.get('role') != 'citizen':
+        return "Access denied", 403
+
+    user_id = session['user_id']
+    db = get_db()
+    cur = db.cursor()
+
+    # Fetch help requests for this user along with disaster info
+    cur.execute("""
+        SELECT hr.request_id, hr.help_type, hr.location as request_location, hr.contact_info,
+               d.disaster_id, d.type AS disaster_type, d.location AS disaster_location, d.date_time,
+               group_concat(u.name) AS volunteer_names
+        FROM help_requests hr
+        JOIN disasters d ON hr.disaster_id = d.disaster_id
+        LEFT JOIN volunteer_assignments va ON d.disaster_id = va.disaster_id
+        LEFT JOIN users u ON va.volunteer_id = u.user_id
+        WHERE hr.user_id = ?
+        GROUP BY hr.request_id
+        ORDER BY d.date_time DESC
+    """, (user_id,))
+
+    requests = cur.fetchall()
+
+    return render_template('my_requests.html', requests=requests)
+
+@app.route('/delete_request/<int:request_id>', methods=['POST'])
+def delete_request(request_id):
+    if 'user_id' not in session:
+        return redirect('/login')
+    if session.get('role') != 'citizen':
+        return "Access denied", 403
+
+    user_id = session['user_id']
+    db = get_db()
+    cur = db.cursor()
+
+    # Verify the request belongs to the logged-in user
+    cur.execute("SELECT * FROM help_requests WHERE request_id = ? AND user_id = ?", (request_id, user_id))
+    req = cur.fetchone()
+    if not req:
+        return "Help request not found or unauthorized.", 404
+
+    cur.execute("DELETE FROM help_requests WHERE request_id = ?", (request_id,))
+    db.commit()
+
+    return redirect(url_for('my_requests'))
+@app.route('/citizen_profile')
+def citizen_profile():
+    if 'user_id' not in session:
+        return redirect('/login')
+    if session.get('role') != 'citizen':
+        return "Access denied", 403
+
+    user_id = session['user_id']
+    db = get_db()
+    cur = db.cursor()
+
+    # Fetch user ID, name, and email
+    cur.execute("SELECT user_id, name, email FROM users WHERE user_id = ?", (user_id,))
+    user = cur.fetchone()
+
+    if not user:
+        return "User not found", 404
+
+    return render_template('citizen_profile.html', user=user)
+
+# C233082 f
 #admin_view_disasters
 @app.route('/view_disasters')
 def view_disasters():
