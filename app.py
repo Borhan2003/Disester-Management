@@ -231,27 +231,31 @@ def request_help():
 
     if request.method == 'POST':
         user_id = session['user_id']
-        disaster_id = request.form.get('disaster_id')
-        help_type = request.form.get('help_type')
-        location = request.form.get('location')
-        contact_info = request.form.get('contact_info')
+        disaster_type = request.form.get('disaster_type', '').strip()
+        help_type = request.form.get('help_type', '').strip()
+        location = request.form.get('location', '').strip()
+        contact_info = request.form.get('contact_info', '').strip()
 
-        if not (disaster_id and help_type and location and contact_info):
+      
+        if not (disaster_type and help_type and location and contact_info):
             return "All fields are required.", 400
 
-        try:
-            cur.execute("""
-                INSERT INTO help_requests (user_id, disaster_id, help_type, location, contact_info)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, disaster_id, help_type, location, contact_info))
-            db.commit()
-            return redirect('/dashboard')
-        except Exception as e:
-            return f"Database error: {e}", 500
+        date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute("""
+            INSERT INTO disasters (type, location, date_time, description, reported_by)
+            VALUES (?, ?, ?, ?, ?)
+        """, (disaster_type, location, date_time, None, user_id))
+        disaster_id = cur.lastrowid  
 
-    cur.execute("SELECT disaster_id, type, location, date_time FROM disasters ORDER BY date_time DESC")
-    disasters = cur.fetchall()
-    return render_template('request_help.html', disasters=disasters)
+        cur.execute("""
+            INSERT INTO help_requests (user_id, disaster_id, help_type, location, contact_info)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, disaster_id, help_type, location, contact_info))
+
+        db.commit()
+        return redirect('/dashboard')
+    return render_template('request_help.html')
+
 @app.route('/my_requests')
 def my_requests():
     if 'user_id' not in session:
